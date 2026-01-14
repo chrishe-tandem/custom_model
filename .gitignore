@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Model files
+*.pkl
+*.joblib
+*.h5
+*.pb
+
+# Results
+results/
+*.json
+*.csv
+!requirements.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Optuna
+optuna.db
+*.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
