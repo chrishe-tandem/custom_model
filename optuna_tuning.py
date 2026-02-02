@@ -7,26 +7,34 @@ Uses cross-validation scores for robust hyperparameter selection.
 import optuna
 import numpy as np
 from sklearn.model_selection import KFold
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import (
+    r2_score, mean_absolute_error, mean_squared_error,
+    accuracy_score, f1_score, roc_auc_score
+)
 import xgboost as xgb
 import warnings
 warnings.filterwarnings('ignore')
 
 
-def create_objective(X, y, cv_folds=5, metric='r2', random_state=42):
+def create_objective(X, y, task='regression', cv_folds=5, metric=None, random_state=42):
     """
     Create Optuna objective function with cross-validation.
     
     Args:
         X: Feature matrix (DataFrame or array)
         y: Target vector (Series or array)
+        task: 'regression' or 'classification' (default: 'regression')
         cv_folds: Number of CV folds (default: 5)
-        metric: Metric to optimize ('r2', 'mae', 'rmse')
+        metric: Metric to optimize (default: 'r2' for regression, 'f1' for classification)
         random_state: Random state for reproducibility
         
     Returns:
         Objective function for Optuna
     """
+    # Set default metric based on task
+    if metric is None:
+        metric = 'f1' if task == 'classification' else 'r2'
+    
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=random_state)
     
     def objective(trial):
@@ -57,8 +65,12 @@ def create_objective(X, y, cv_folds=5, metric='r2', random_state=42):
             X_train_fold = X_train_fold.fillna(0)
             X_val_fold = X_val_fold.fillna(0)
             
-            # Train model
-            model = xgb.XGBRegressor(**params)
+            # Create appropriate model type
+            if task == 'classification':
+                model = xgb.XGBClassifier(**params)
+            else:
+                model = xgb.XGBRegressor(**params)
+            
             model.fit(
                 X_train_fold, y_train_fold,
                 eval_set=[(X_val_fold, y_val_fold)],
@@ -68,14 +80,29 @@ def create_objective(X, y, cv_folds=5, metric='r2', random_state=42):
             # Predict and calculate metric
             y_pred = model.predict(X_val_fold)
             
-            if metric == 'r2':
-                score = r2_score(y_val_fold, y_pred)
-            elif metric == 'mae':
-                score = -mean_absolute_error(y_val_fold, y_pred)  # Negative for minimization
-            elif metric == 'rmse':
-                score = -np.sqrt(mean_squared_error(y_val_fold, y_pred))  # Negative for minimization
+            if task == 'classification':
+                if metric == 'f1':
+                    score = f1_score(y_val_fold, y_pred, average='weighted', zero_division=0)
+                elif metric == 'accuracy':
+                    score = accuracy_score(y_val_fold, y_pred)
+                elif metric == 'roc_auc':
+                    if len(np.unique(y_val_fold)) == 2:
+                        y_pred_proba = model.predict_proba(X_val_fold)[:, 1]
+                        score = roc_auc_score(y_val_fold, y_pred_proba)
+                    else:
+                        score = 0.0
+                else:
+                    raise ValueError(f"Unknown classification metric: {metric}")
             else:
-                raise ValueError(f"Unknown metric: {metric}")
+                # Regression
+                if metric == 'r2':
+                    score = r2_score(y_val_fold, y_pred)
+                elif metric == 'mae':
+                    score = -mean_absolute_error(y_val_fold, y_pred)  # Negative for minimization
+                elif metric == 'rmse':
+                    score = -np.sqrt(mean_squared_error(y_val_fold, y_pred))  # Negative for minimization
+                else:
+                    raise ValueError(f"Unknown regression metric: {metric}")
             
             cv_scores.append(score)
         
@@ -85,7 +112,7 @@ def create_objective(X, y, cv_folds=5, metric='r2', random_state=42):
     return objective
 
 
-def optimize_hyperparameters(X, y, n_trials=100, cv_folds=5, metric='r2', 
+def optimize_hyperparameters(X, y, task='regression', n_trials=100, cv_folds=5, metric=None, 
                              direction='maximize', random_state=42, 
                              study_name='xgboost_optuna'):
     """
@@ -94,9 +121,10 @@ def optimize_hyperparameters(X, y, n_trials=100, cv_folds=5, metric='r2',
     Args:
         X: Feature matrix (DataFrame or array)
         y: Target vector (Series or array)
+        task: 'regression' or 'classification' (default: 'regression')
         n_trials: Number of Optuna trials (default: 100)
         cv_folds: Number of CV folds (default: 5)
-        metric: Metric to optimize ('r2', 'mae', 'rmse')
+        metric: Metric to optimize (default: 'r2' for regression, 'f1' for classification)
         direction: Optimization direction ('maximize' or 'minimize')
         random_state: Random state for reproducibility
         study_name: Name for Optuna study
@@ -104,19 +132,30 @@ def optimize_hyperparameters(X, y, n_trials=100, cv_folds=5, metric='r2',
     Returns:
         Dictionary with best hyperparameters and study object
     """
+    # Set default metric based on task
+    if metric is None:
+        metric = 'f1' if task == 'classification' else 'r2'
+    
     print("=" * 80)
     print("Optuna Hyperparameter Optimization")
     print("=" * 80)
+    print(f"  Task: {task}")
     print(f"  Metric: {metric}")
     print(f"  CV folds: {cv_folds}")
     print(f"  Trials: {n_trials}")
-    print(f"  Direction: {direction}")
     
     # Determine direction based on metric
-    if metric == 'r2':
+    if task == 'classification':
+        # All classification metrics are maximized
         direction = 'maximize'
-    else:  # mae, rmse
-        direction = 'minimize'
+    else:
+        # Regression
+        if metric == 'r2':
+            direction = 'maximize'
+        else:  # mae, rmse
+            direction = 'minimize'
+    
+    print(f"  Direction: {direction}")
     
     # Create study
     study = optuna.create_study(
@@ -126,7 +165,7 @@ def optimize_hyperparameters(X, y, n_trials=100, cv_folds=5, metric='r2',
     )
     
     # Create objective function
-    objective = create_objective(X, y, cv_folds=cv_folds, metric=metric, 
+    objective = create_objective(X, y, task=task, cv_folds=cv_folds, metric=metric, 
                                 random_state=random_state)
     
     # Optimize

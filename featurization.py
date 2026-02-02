@@ -281,8 +281,16 @@ def calculate_all_features(smiles_list, reduced_features_path=None,
     # Concatenate horizontally
     df_combined = pd.concat(dfs, axis=1)
     
+    # Convert all columns to numeric (handles string/object types)
+    print("  Converting features to numeric types...")
+    for col in df_combined.columns:
+        df_combined[col] = pd.to_numeric(df_combined[col], errors='coerce')
+    
     # Fill NaN values with 0
     df_combined = df_combined.fillna(0)
+    
+    # Ensure all columns are numeric (convert any remaining object types)
+    df_combined = df_combined.astype(float)
     
     print(f"  Total features: {df_combined.shape[1]}")
     print(f"  Feature breakdown:")

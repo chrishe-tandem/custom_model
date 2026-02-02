@@ -21,6 +21,9 @@ from xgboost_trainer import (
     train_xgboost, evaluate_model, cross_validate_model,
     save_model, get_feature_importance
 )
+from feature_selection import (
+    select_features_mutual_info, save_selected_features, load_selected_features
+)
 
 
 def main():
@@ -32,8 +35,22 @@ def main():
                        help='Number of Optuna trials (default: 100)')
     parser.add_argument('--cv_folds', type=int, default=5,
                        help='Number of CV folds (default: 5)')
-    parser.add_argument('--metric', type=str, default='r2', choices=['r2', 'mae', 'rmse'],
-                       help='Metric to optimize (default: r2)')
+    parser.add_argument('--task', type=str, default='regression', choices=['regression', 'classification'],
+                       help='Task type: regression or classification (default: regression)')
+    parser.add_argument('--metric', type=str, default='r2', 
+                       help='Metric to optimize (default: r2 for regression, f1 for classification)')
+    parser.add_argument('--classification_threshold', type=float, default=None,
+                       help='Custom threshold for classification (default: median split)')
+    parser.add_argument('--use_feature_selection', action='store_true',
+                       help='Enable mutual information feature selection')
+    parser.add_argument('--feature_selection_ratio', type=float, default=1.0,
+                       help='Feature selection ratio (default: 1.0 means n_features = n_samples)')
+    parser.add_argument('--feature_selection_n', type=int, default=None,
+                       help='Fixed number of features to select (alternative to ratio)')
+    parser.add_argument('--feature_selection_threshold', type=float, default=None,
+                       help='MI threshold for feature selection (alternative to ratio/n)')
+    parser.add_argument('--saved_features', type=str, default=None,
+                       help='Path to previously saved feature selection JSON file')
     parser.add_argument('--output_dir', type=str, default='results',
                        help='Output directory for results (default: results)')
     parser.add_argument('--reduced_features', type=str, 
@@ -47,6 +64,8 @@ def main():
                        help='Test set size (default: 0.2)')
     parser.add_argument('--random_state', type=int, default=42,
                        help='Random state for reproducibility (default: 42)')
+    parser.add_argument('--skip_optuna', action='store_true',
+                       help='Skip Optuna optimization and use default hyperparameters')
     
     args = parser.parse_args()
     
@@ -57,9 +76,16 @@ def main():
     print("XGBoost Training Pipeline")
     print("=" * 80)
     print(f"Data: {args.data}")
+    print(f"Task: {args.task}")
     print(f"Optuna trials: {args.n_trials}")
     print(f"CV folds: {args.cv_folds}")
     print(f"Metric: {args.metric}")
+    print(f"Feature selection: {args.use_feature_selection}")
+    if args.use_feature_selection:
+        if args.saved_features:
+            print(f"  Using saved features: {args.saved_features}")
+        else:
+            print(f"  Selection ratio: {args.feature_selection_ratio}")
     print(f"Output directory: {args.output_dir}")
     print("=" * 80)
     
@@ -89,6 +115,26 @@ def main():
     print(f"   Target range: [{y.min():.2f}, {y.max():.2f}]")
     print(f"   Target mean: {y.mean():.2f} ± {y.std():.2f}")
     
+    # Step 1.5: Detect/Set task type and apply classification threshold if needed
+    task = args.task
+    classification_threshold = None
+    
+    if task == 'classification':
+        # Apply classification threshold (median split by default)
+        if args.classification_threshold is not None:
+            classification_threshold = args.classification_threshold
+        else:
+            classification_threshold = y.median()
+        
+        print(f"\n1.5. Applying classification threshold...")
+        print(f"   Threshold: {classification_threshold:.4f} (median split)")
+        y = (y >= classification_threshold).astype(int)
+        
+        class_counts = y.value_counts().sort_index()
+        print(f"   Class distribution:")
+        for class_val, count in class_counts.items():
+            print(f"     Class {class_val}: {count} samples ({count/len(y)*100:.1f}%)")
+    
     # Step 2: Calculate features
     print("\n2. Calculating features...")
     try:
@@ -105,42 +151,116 @@ def main():
         traceback.print_exc()
         return
     
+    # Step 2.5: Feature selection
+    if args.use_feature_selection:
+        print("\n2.5. Feature selection...")
+        try:
+            if args.saved_features:
+                # Load previously selected features
+                selected_feature_names = load_selected_features(args.saved_features)
+                X = X[selected_feature_names]
+                print(f"   Using {len(selected_feature_names)} pre-selected features")
+            else:
+                # Perform feature selection
+                selection_result = select_features_mutual_info(
+                    X, y,
+                    task=task,
+                    ratio=args.feature_selection_ratio if args.feature_selection_n is None else None,
+                    n_features=args.feature_selection_n,
+                    threshold=args.feature_selection_threshold,
+                    random_state=args.random_state
+                )
+                
+                selected_feature_names = selection_result['selected_features']
+                X = X[selected_feature_names]
+                
+                # Save selected features
+                features_path = os.path.join(args.output_dir, 'selected_features.json')
+                save_selected_features(
+                    selected_feature_names,
+                    features_path,
+                    selection_result['selection_info']
+                )
+                
+                # Save MI scores
+                mi_scores_path = os.path.join(args.output_dir, 'feature_selection_scores.csv')
+                selection_result['mi_scores'].to_csv(mi_scores_path, index=False)
+                print(f"   MI scores saved to {mi_scores_path}")
+                
+        except Exception as e:
+            print(f"Error in feature selection: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+    
     # Step 3: Split data
     print("\n3. Splitting data...")
     from sklearn.model_selection import train_test_split
     
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=args.test_size, random_state=args.random_state
-    )
-    
-    print(f"   Train set: {len(X_train)} samples")
-    print(f"   Test set: {len(X_test)} samples")
-    
-    # Step 4: Optuna optimization
-    print("\n4. Optuna hyperparameter optimization...")
-    try:
-        optuna_results = optimize_hyperparameters(
-            X_train, y_train,
-            n_trials=args.n_trials,
-            cv_folds=args.cv_folds,
-            metric=args.metric,
-            random_state=args.random_state
+    if args.test_size == 0:
+        # Use all data for training (no test set)
+        X_train, X_test, y_train, y_test = X, None, y, None
+        print(f"   Train set: {len(X_train)} samples (all data)")
+        print(f"   Test set: None (test_size=0)")
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=args.test_size, random_state=args.random_state,
+            stratify=y if task == 'classification' else None
         )
-        
-        best_params = optuna_results['best_params']
-        best_value = optuna_results['best_value']
-        
-        # Save best hyperparameters
-        hyperparams_path = os.path.join(args.output_dir, 'best_hyperparameters.json')
-        with open(hyperparams_path, 'w') as f:
-            json.dump(best_params, f, indent=2)
-        print(f"   Best hyperparameters saved to {hyperparams_path}")
-        
-    except Exception as e:
-        print(f"Error in Optuna optimization: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+        print(f"   Train set: {len(X_train)} samples")
+        print(f"   Test set: {len(X_test)} samples")
+    
+    # Step 4: Optuna optimization (or use defaults)
+    if args.skip_optuna:
+        print("\n4. Skipping Optuna optimization (using default hyperparameters)...")
+        # Default hyperparameters
+        best_params = {
+            'n_estimators': 100,
+            'max_depth': 6,
+            'learning_rate': 0.1,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'min_child_weight': 1,
+            'gamma': 0,
+            'reg_alpha': 0,
+            'reg_lambda': 1,
+            'random_state': args.random_state
+        }
+        best_value = None
+        print("   Using default hyperparameters")
+    else:
+        print("\n4. Optuna hyperparameter optimization...")
+        try:
+            # Set default metric based on task if not specified
+            metric = args.metric
+            if metric == 'r2' and task == 'classification':
+                metric = 'f1'
+            elif metric not in ['r2', 'mae', 'rmse'] and task == 'regression':
+                metric = 'r2'
+            
+            optuna_results = optimize_hyperparameters(
+                X_train, y_train,
+                task=task,
+                n_trials=args.n_trials,
+                cv_folds=args.cv_folds,
+                metric=metric,
+                random_state=args.random_state
+            )
+            
+            best_params = optuna_results['best_params']
+            best_value = optuna_results['best_value']
+            
+        except Exception as e:
+            print(f"Error in Optuna optimization: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+    
+    # Save hyperparameters
+    hyperparams_path = os.path.join(args.output_dir, 'best_hyperparameters.json')
+    with open(hyperparams_path, 'w') as f:
+        json.dump(best_params, f, indent=2)
+    print(f"   Hyperparameters saved to {hyperparams_path}")
     
     # Step 5: Train final model
     print("\n5. Training final model...")
@@ -158,6 +278,7 @@ def main():
             X_train_final, y_train_final,
             X_val_final, y_val_final,
             final_params,
+            task=task,
             verbose=True
         )
         
@@ -169,30 +290,69 @@ def main():
         traceback.print_exc()
         return
     
-    # Step 6: Evaluate on test set
-    print("\n6. Evaluating on test set...")
-    test_metrics = evaluate_model(model, X_test, y_test)
-    print(f"   Test R²: {test_metrics['r2']:.4f}")
-    print(f"   Test MAE: {test_metrics['mae']:.4f}")
-    print(f"   Test RMSE: {test_metrics['rmse']:.4f}")
+    # Step 6: Evaluate on test set (if available)
+    if X_test is not None and y_test is not None:
+        print("\n6. Evaluating on test set...")
+        test_metrics = evaluate_model(model, X_test, y_test, task=task)
+        
+        if task == 'regression':
+            print(f"   Test R²: {test_metrics['r2']:.4f}")
+            print(f"   Test MAE: {test_metrics['mae']:.4f}")
+            print(f"   Test RMSE: {test_metrics['rmse']:.4f}")
+            print(f"   Test Pearson r: {test_metrics['pearson_r']:.4f} (p={test_metrics['pearson_p_value']:.2e})")
+            print(f"   Test Spearman ρ: {test_metrics['spearman_rho']:.4f} (p={test_metrics['spearman_p_value']:.2e})")
+        else:  # classification
+            print(f"   Test Accuracy: {test_metrics['accuracy']:.4f}")
+            print(f"   Test Precision: {test_metrics['precision']:.4f}")
+            print(f"   Test Recall: {test_metrics['recall']:.4f}")
+            print(f"   Test F1: {test_metrics['f1']:.4f}")
+            if 'roc_auc' in test_metrics:
+                print(f"   Test ROC-AUC: {test_metrics['roc_auc']:.4f}")
+            if 'pr_auc' in test_metrics:
+                print(f"   Test PR-AUC: {test_metrics['pr_auc']:.4f}")
+    else:
+        print("\n6. Skipping test set evaluation (test_size=0, using all data for training)")
+        test_metrics = None
     
     # Step 7: Cross-validation evaluation
     print("\n7. Cross-validation evaluation...")
     cv_results = cross_validate_model(
         X_train, y_train,
         best_params,
+        task=task,
         cv_folds=args.cv_folds,
         random_state=args.random_state
     )
     
     print(f"\n   CV Results:")
-    print(f"     R²: {cv_results['r2_mean']:.4f} ± {cv_results['r2_std']:.4f}")
-    print(f"     MAE: {cv_results['mae_mean']:.4f} ± {cv_results['mae_std']:.4f}")
-    print(f"     RMSE: {cv_results['rmse_mean']:.4f} ± {cv_results['rmse_std']:.4f}")
+    if task == 'regression':
+        print(f"     R²: {cv_results['r2_mean']:.4f} ± {cv_results['r2_std']:.4f}")
+        print(f"     MAE: {cv_results['mae_mean']:.4f} ± {cv_results['mae_std']:.4f}")
+        print(f"     RMSE: {cv_results['rmse_mean']:.4f} ± {cv_results['rmse_std']:.4f}")
+        print(f"     Pearson r: {cv_results['pearson_r_mean']:.4f} ± {cv_results['pearson_r_std']:.4f}")
+        print(f"     Spearman ρ: {cv_results['spearman_rho_mean']:.4f} ± {cv_results['spearman_rho_std']:.4f}")
+    else:  # classification
+        print(f"     Accuracy: {cv_results['accuracy_mean']:.4f} ± {cv_results['accuracy_std']:.4f}")
+        print(f"     Precision: {cv_results['precision_mean']:.4f} ± {cv_results['precision_std']:.4f}")
+        print(f"     Recall: {cv_results['recall_mean']:.4f} ± {cv_results['recall_std']:.4f}")
+        print(f"     F1: {cv_results['f1_mean']:.4f} ± {cv_results['f1_std']:.4f}")
+        if 'roc_auc_mean' in cv_results:
+            print(f"     ROC-AUC: {cv_results['roc_auc_mean']:.4f} ± {cv_results['roc_auc_std']:.4f}")
     
     # Step 8: Feature importance
     print("\n8. Extracting feature importance...")
     feature_names = X.columns.tolist()
+    
+    # Save confusion matrix for classification (if test set exists)
+    if task == 'classification' and test_metrics and 'confusion_matrix' in test_metrics:
+        cm_path = os.path.join(args.output_dir, 'confusion_matrix.csv')
+        cm_df = pd.DataFrame(
+            test_metrics['confusion_matrix'],
+            index=[f'True_{i}' for i in range(len(test_metrics['confusion_matrix']))],
+            columns=[f'Pred_{i}' for i in range(len(test_metrics['confusion_matrix'][0]))]
+        )
+        cm_df.to_csv(cm_path)
+        print(f"   Confusion matrix saved to {cm_path}")
     df_importance, df_importance_top = get_feature_importance(
         model, feature_names, top_n=50
     )
@@ -215,22 +375,30 @@ def main():
     results = {
         'timestamp': datetime.now().isoformat(),
         'data_file': args.data,
+        'task': task,
+        'classification_threshold': classification_threshold if task == 'classification' else None,
         'n_samples': len(smiles_list),
         'n_features': X.shape[1],
+        'feature_selection_used': args.use_feature_selection,
         'test_size': args.test_size,
         'n_trials': args.n_trials,
         'cv_folds': args.cv_folds,
         'metric': args.metric,
         'best_hyperparameters': best_params,
-        'best_optuna_value': best_value,
-        'test_metrics': test_metrics,
-        'cv_metrics': {
+        'best_optuna_value': best_value if not args.skip_optuna else None,
+        'optuna_skipped': args.skip_optuna,
+        'test_metrics': test_metrics,  # None if test_size=0
+        'cv_metrics': cv_results if task == 'classification' else {
             'r2_mean': cv_results['r2_mean'],
             'r2_std': cv_results['r2_std'],
             'mae_mean': cv_results['mae_mean'],
             'mae_std': cv_results['mae_std'],
             'rmse_mean': cv_results['rmse_mean'],
-            'rmse_std': cv_results['rmse_std']
+            'rmse_std': cv_results['rmse_std'],
+            'pearson_r_mean': cv_results['pearson_r_mean'],
+            'pearson_r_std': cv_results['pearson_r_std'],
+            'spearman_rho_mean': cv_results['spearman_rho_mean'],
+            'spearman_rho_std': cv_results['spearman_rho_std']
         },
         'model_info': {
             'n_estimators': history['n_estimators'],
@@ -252,8 +420,28 @@ def main():
     print(f"Results: {results_path}")
     print(f"Feature importance: {importance_path}")
     print(f"\nFinal Performance:")
-    print(f"  Test R²: {test_metrics['r2']:.4f}")
-    print(f"  CV R²: {cv_results['r2_mean']:.4f} ± {cv_results['r2_std']:.4f}")
+    if test_metrics:
+        if task == 'regression':
+            print(f"  Test R²: {test_metrics['r2']:.4f}")
+            print(f"  Test Pearson r: {test_metrics['pearson_r']:.4f}")
+            print(f"  Test Spearman ρ: {test_metrics['spearman_rho']:.4f}")
+            print(f"  Test RMSE: {test_metrics['rmse']:.4f}")
+        else:  # classification
+            print(f"  Test Accuracy: {test_metrics['accuracy']:.4f}")
+            print(f"  Test F1: {test_metrics['f1']:.4f}")
+            if 'roc_auc' in test_metrics:
+                print(f"  Test ROC-AUC: {test_metrics['roc_auc']:.4f}")
+    
+    if task == 'regression':
+        print(f"  CV R²: {cv_results['r2_mean']:.4f} ± {cv_results['r2_std']:.4f}")
+        print(f"  CV Pearson r: {cv_results['pearson_r_mean']:.4f} ± {cv_results['pearson_r_std']:.4f}")
+        print(f"  CV Spearman ρ: {cv_results['spearman_rho_mean']:.4f} ± {cv_results['spearman_rho_std']:.4f}")
+        print(f"  CV RMSE: {cv_results['rmse_mean']:.4f} ± {cv_results['rmse_std']:.4f}")
+    else:  # classification
+        print(f"  CV Accuracy: {cv_results['accuracy_mean']:.4f} ± {cv_results['accuracy_std']:.4f}")
+        print(f"  CV F1: {cv_results['f1_mean']:.4f} ± {cv_results['f1_std']:.4f}")
+        if 'roc_auc_mean' in cv_results:
+            print(f"  CV ROC-AUC: {cv_results['roc_auc_mean']:.4f} ± {cv_results['roc_auc_std']:.4f}")
     print("=" * 80)
 
 
