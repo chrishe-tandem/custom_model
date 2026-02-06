@@ -19,12 +19,20 @@ ENV/
 results/
 *_results/
 *_no_testset/
+all_results/
+
+# JSON files (except reduced_mordred_features.json)
 *.json
 !reduced_mordred_features.json
+
+# CSV files (except reduced_mordred_features - but that's JSON, so ignore all CSV)
 *.csv
-*.log
-peptide_*.csv
 !peptide_sample_*.csv
+
+# Log files
+*.log
+*_training*.log
+*_prediction*.log
 
 # IDE
 .vscode/
