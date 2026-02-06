@@ -165,13 +165,22 @@ except Exception as e:
 # Test 4: Reduced Mordred features (if available)
 print("\n4. Testing reduced Mordred features...")
 try:
-    reduced_features_path = "../reduced_mordred_features.json"
-    if os.path.exists(reduced_features_path):
+    # Try current directory first, then parent directory for backward compatibility
+    current_path = "reduced_mordred_features.json"
+    parent_path = "../reduced_mordred_features.json"
+    
+    reduced_features_path = None
+    if os.path.exists(current_path):
+        reduced_features_path = current_path
+    elif os.path.exists(parent_path):
+        reduced_features_path = parent_path
+    
+    if reduced_features_path:
         df_mordred = calculate_mordred_features(test_smiles, reduced_features_path)
         assert df_mordred.shape[0] == len(test_smiles), "Wrong number of rows"
         print(f"   ✓ Mordred: {df_mordred.shape}")
     else:
-        print(f"   ⚠ Skipped (file not found: {reduced_features_path})")
+        print(f"   ⚠ Skipped (file not found: {current_path} or {parent_path})")
 except Exception as e:
     print(f"   ⚠ Mordred features skipped: {e}")
 

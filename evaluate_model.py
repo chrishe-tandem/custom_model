@@ -165,7 +165,7 @@ def main():
     parser.add_argument('--output', type=str, default='evaluation_results.json',
                        help='Output file for metrics (default: evaluation_results.json)')
     parser.add_argument('--reduced_features', type=str,
-                       default='../reduced_mordred_features.json',
+                       default='reduced_mordred_features.json',
                        help='Path to reduced Mordred features JSON')
     parser.add_argument('--include_map4', action='store_true', default=True,
                        help='Include MAP4 fingerprints')

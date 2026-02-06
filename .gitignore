@@ -20,8 +20,8 @@ results/
 *_results/
 *_no_testset/
 *.json
+!reduced_mordred_features.json
 *.csv
-!requirements.txt
 *.log
 peptide_*.csv
 !peptide_sample_*.csv

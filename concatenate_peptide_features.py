@@ -110,7 +110,7 @@ def main():
     parser.add_argument(
         '--reduced_features',
         type=str,
-        default='../reduced_mordred_features.json',
+        default='reduced_mordred_features.json',
         help='Path to reduced Mordred features JSON file'
     )
     parser.add_argument(

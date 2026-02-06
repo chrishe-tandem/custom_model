@@ -17,13 +17,19 @@ from rdkit.Chem import MACCSkeys
 import sys
 import os
 
-# Add parent directory to path to import reduce_mordred_features
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Try to import reduce_mordred_features from current directory first, then parent
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+
+# Add current directory to path (for self-contained deployment)
+sys.path.insert(0, current_dir)
+# Also add parent directory for backward compatibility
+sys.path.append(parent_dir)
 
 try:
     from reduce_mordred_features import create_reduced_calculator, load_reduced_feature_list
 except ImportError:
-    print("Warning: Could not import reduce_mordred_features. Ensure it's in parent directory.")
+    print("Warning: Could not import reduce_mordred_features. Ensure it's in the same directory or parent directory.")
     create_reduced_calculator = None
     load_reduced_feature_list = None
 
@@ -51,9 +57,14 @@ def calculate_mordred_features(smiles_list, reduced_features_path=None):
     
     # Load reduced feature list
     if reduced_features_path is None:
-        # Try to find in parent directory
-        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        reduced_features_path = os.path.join(parent_dir, "reduced_mordred_features.json")
+        # Try to find in current directory first, then parent directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        current_path = os.path.join(current_dir, "reduced_mordred_features.json")
+        if os.path.exists(current_path):
+            reduced_features_path = current_path
+        else:
+            parent_dir = os.path.dirname(current_dir)
+            reduced_features_path = os.path.join(parent_dir, "reduced_mordred_features.json")
     
     try:
         reduced_features = load_reduced_feature_list(reduced_features_path)

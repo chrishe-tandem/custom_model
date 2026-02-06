@@ -43,7 +43,7 @@ pip install -r requirements.txt
 
 ```bash
 python train_model.py \
-    --data ../train_val_features.csv \
+    --data train_val_features.csv \
     --task regression \
     --n_trials 100 \
     --cv_folds 5 \
@@ -67,7 +67,7 @@ python train_model.py \
 
 ```bash
 python train_model.py \
-    --data ../train_val_features.csv \
+    --data train_val_features.csv \
     --task regression \
     --use_feature_selection \
     --feature_selection_ratio 1.0 \
@@ -95,7 +95,7 @@ python train_model.py \
 python concatenate_peptide_features.py \
     --peptide_data ~/Downloads/processed_data_filtered_with_embeddings.csv \
     --output peptide_molecular_combined.csv \
-    --reduced_features ../reduced_mordred_features.json
+    --reduced_features reduced_mordred_features.json
 
 # Then train on the combined dataset
 python train_model.py \
@@ -111,14 +111,14 @@ python train_model.py \
 
 ### `train_model.py`
 
-- `--data`: Path to training data CSV file (default: `../train_val_features.csv`)
+- `--data`: Path to training data CSV file (default: `train_val_features.csv`)
 - `--task`: Task type - `regression` or `classification` (default: `regression`)
 - `--classification_threshold`: Custom threshold for binary classification (optional, defaults to median)
 - `--n_trials`: Number of Optuna trials (default: 100)
 - `--cv_folds`: Number of CV folds (default: 5)
 - `--metric`: Metric to optimize - `r2`, `mae`, `rmse` for regression; `accuracy`, `f1`, `roc_auc` for classification (default: `r2`)
 - `--output_dir`: Output directory for results (default: `results`)
-- `--reduced_features`: Path to reduced Mordred features JSON (default: `../reduced_mordred_features.json`)
+- `--reduced_features`: Path to reduced Mordred features JSON (default: `reduced_mordred_features.json`)
 - `--include_map4`: Include MAP4 fingerprints (default: True)
 - `--map4_dimensions`: MAP4 fingerprint dimensions (default: 1024)
 - `--test_size`: Test set size (0.0 to 1.0, or 0 for all data) (default: 0.2)
@@ -134,7 +134,7 @@ python train_model.py \
 
 - `--peptide_data`: Path to peptide data CSV with embeddings (default: `~/Downloads/processed_data_filtered_with_embeddings.csv`)
 - `--output`: Output CSV file path (default: `peptide_molecular_combined.csv`)
-- `--reduced_features`: Path to reduced Mordred features JSON (default: `../reduced_mordred_features.json`)
+- `--reduced_features`: Path to reduced Mordred features JSON (default: `reduced_mordred_features.json`)
 - `--include_map4`: Include MAP4 fingerprints (default: True)
 - `--map4_dimensions`: MAP4 fingerprint dimensions (default: 1024)
 - `--save_features_only`: Save only features (no labels/metadata)
@@ -292,7 +292,7 @@ Or use the shell script:
 
 ## Notes
 
-- Ensure `reduced_mordred_features.json` exists in the parent directory (or specify path with `--reduced_features`)
+- Ensure `reduced_mordred_features.json` exists in the current directory (or specify path with `--reduced_features`)
 - MAP4 requires the `map4` package (install with `pip install map4`)
 - The pipeline handles missing values by filling with 0
 - Early stopping is used during training to prevent overfitting

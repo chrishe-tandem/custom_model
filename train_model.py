@@ -46,7 +46,7 @@ except ImportError:
 def main():
     """Main training pipeline."""
     parser = argparse.ArgumentParser(description='Train XGBoost model with Optuna optimization')
-    parser.add_argument('--data', type=str, default='../train_val_features.csv',
+    parser.add_argument('--data', type=str, default='train_val_features.csv',
                        help='Path to training data CSV file')
     parser.add_argument('--n_trials', type=int, default=100,
                        help='Number of Optuna trials (default: 100)')
@@ -71,7 +71,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='results',
                        help='Output directory for results (default: results)')
     parser.add_argument('--reduced_features', type=str, 
-                       default='../reduced_mordred_features.json',
+                       default='reduced_mordred_features.json',
                        help='Path to reduced Mordred features JSON file')
     parser.add_argument('--include_map4', action='store_true', default=True,
                        help='Include MAP4 fingerprints (default: True)')
@@ -362,6 +362,7 @@ def main():
             return
     
     # Save hyperparameters
+    os.makedirs(args.output_dir, exist_ok=True)  # Ensure directory exists
     hyperparams_path = os.path.join(args.output_dir, 'best_hyperparameters.json')
     with open(hyperparams_path, 'w') as f:
         json.dump(best_params, f, indent=2)
